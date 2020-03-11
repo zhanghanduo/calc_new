@@ -67,11 +67,17 @@ def _extract_fn(tfrecord):
     # Extract the data record
     sample = tf.parse_single_example(tfrecord, features)
 
-    image = tf.image.decode_image(sample['img'])
+    sample['img'] = tf.reshape(tf.cast(tf.decode_raw(sample['img'], tf.uint8),
+                                   tf.float32) / 255.0, [__vh, __vw, 3])
+    sample['label'] = tf.reshape(tf.decode_raw(sample['label'], tf.uint8), [__vh, __vw])
+    sample['label'] = tf.cast(tf.one_hot(sample['label'], N_CLASSES), tf.float32)
+
+    # image = tf.image.decode_image(sample['img'])
+    # print("image dim: ", tf.shape(sample['img']))
     # img_shape = tf.stack([sample['rows'], sample['cols'], sample['channels']])
-    label = sample['label']
+    # label = sample['label']
     # filename = sample['filename']
-    return [image, label]
+    return sample
 
 
 class TFRecordExtractor:
@@ -85,100 +91,56 @@ class TFRecordExtractor:
         os.mkdir(folder_path)
 
         # Pipeline of dataset and iterator
-        dataset = tf.data.TFRecordDataset([self.tfrecord_file])
+        # print("path: ", self.tfrecord_file)
+        files = tf.data.Dataset.list_files(self.tfrecord_file)
+        dataset = tf.data.TFRecordDataset(files)
+        # dataset.map(_extract_fn, num_parallel_calls=n_cpus() // 2).batch(12)
+        # dataset = dataset.prefetch(buffer_size=2)
         dataset = dataset.map(_extract_fn)
         iterator = dataset.make_one_shot_iterator()
         next_image_data = iterator.get_next()
 
         with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
+            i = 0
+            # try:
+            # Keep extracting data till TFRecord is exhausted
+            while True:
+                image_data = sess.run(next_image_data)
+                # img_ = Image.fromarray(image_data['img'], 'RGB')
+                # img_.show()
+                # print(image_data)
 
-            try:
-                # Keep extracting data till TFRecord is exhausted
-                while True:
-                    image_data = sess.run(next_image_data)
+                image_name1 = 'raw' + str(i)
+                image_name2 = 'aug' + str(i)
+                i = i+1
+                save_path1 = os.path.abspath(os.path.join(folder_path, image_name1))
+                save_path2 = os.path.abspath(os.path.join(folder_path, image_name2))
 
-                    # Check if image shape is same after decoding
-                    if not np.array_equal(image_data[0].shape, image_data[3]):
-                        print('Image {} not decoded properly'.format(image_data[2]))
-                        continue
+                im_l = tf.concat([image_data['img'], image_data['label']], axis=-1)
+                # # x = tf.image.random_flip_left_right(im_l)
+                x = tf.image.random_crop(im_l, [vh, vw, 3 + N_CLASSES])
+                images = x[np.newaxis, :, :, :3]
+                # labels = x[:, :, :, 3:]
 
-                    save_path = os.path.abspath(os.path.join(folder_path, image_data[2].decode('utf-8')))
-                    mpimg.imsave(save_path, image_data[0])
-                    print('Save path = ', save_path, ', Label = ', image_data[1])
-            except:
-                pass
+                im_warp = tf.image.random_flip_left_right(images)
+                im_warp = layers.rand_warp(im_warp, [vh, vw])
+                im_w_adj = tf.clip_by_value(im_warp + \
+                                            tf.random.uniform([tf.shape(im_warp)[0], 1, 1, 1], -.8, 0.0),
+                                            0.0, 1.0)
+                tf.where(tf.less(tf.reduce_mean(im_warp, axis=[1, 2, 3]), 0.2), im_warp, im_w_adj)
+                # im_warp_v = tf.Variable(im_warp)
+                # im_warp_v = layers.random_erasing(im_warp_v)
+                im_warp_v = tf.squeeze(layers.random_erasing(im_warp))
+                print(im_warp_v.shape)
 
-
-def create_input_fn(split, batch_size):
-    """Returns input_fn for tf.estimator.Estimator.
-
-    Reads tfrecord file and constructs input_fn for training
-
-    Args:
-    tfrecord: the .tfrecord file
-    batch_size: The batch size!
-
-    Returns:
-    input_fn for tf.estimator.Estimator.
-
-    Raises:
-    IOError: If test.txt or dev.txt are not found.
-    """
-
-    def input_fn():
-        """input_fn for tf.estimator.Estimator."""
-
-        indir = FLAGS.input_dir
-        tfrecord = 'train_data*.tfrecord' if split == 'train' else 'validation_data.tfrecord'
-
-        def parser(serialized_example):
-
-            features_ = {'img': tf.FixedLenFeature([], tf.string),
-                         'label': tf.FixedLenFeature([], tf.string)}
-
-            if split != 'train':
-                features_['cl_live'] = tf.FixedLenFeature([], tf.string)
-                features_['cl_mem'] = tf.FixedLenFeature([], tf.string)
-
-            fs = tf.parse_single_example(
-                serialized_example,
-                features=features_
-            )
-
-            fs['img'] = tf.reshape(tf.cast(tf.decode_raw(fs['img'], tf.uint8),
-                                           tf.float32) / 255.0, [__vh, __vw, 3])
-            fs['label'] = tf.reshape(tf.decode_raw(fs['label'], tf.uint8), [__vh, __vw])
-            fs['label'] = tf.cast(tf.one_hot(fs['label'], N_CLASSES), tf.float32)
-            if split != 'train':
-                fs['cl_live'] = tf.reshape(tf.cast(tf.decode_raw(fs['cl_live'], tf.uint8),
-                                                   tf.float32) / 255.0, [__vh, __vw, 3])
-                fs['cl_mem'] = tf.reshape(tf.cast(tf.decode_raw(fs['cl_mem'], tf.uint8),
-                                                  tf.float32) / 255.0, [__vh, __vw, 3])
-                fs['cl_live'] = tf.reshape(tf.image.resize_images(fs['cl_live'],
-                                                                  (vh, vw)), [vh, vw, 3])
-                fs['cl_mem'] = tf.reshape(tf.image.resize_images(fs['cl_mem'],
-                                                                 (vh, vw)), [vh, vw, 3])
-
-            return fs
-
-        if split == 'train':
-            files = tf.data.Dataset.list_files(indir + tfrecord, shuffle=True,
-                                               seed=np.int64(time()))
-        else:
-            files = [indir + tfrecord]
-
-        dataset = tf.data.TFRecordDataset(files)
-        # dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(400, seed=np.int64(time())))
-        dataset.shuffle(
-            400, seed=np.int64(time()), reshuffle_each_iteration=True).repeat()
-        dataset.map(parser, num_parallel_calls=n_cpus() // 2).batch(batch_size if split == 'train' else batch_size // 3)
-
-        dataset = dataset.prefetch(buffer_size=2)
-
-        return dataset
-
-    return input_fn
+                mpimg.imsave(save_path1, image_data['img'])
+                # print(im_warp_v.dtype)
+                # img_tosave = tf.squeeze(im_warp)
+                mpimg.imsave(save_path2, im_warp_v.eval())
+                # print('Save path = ', save_path1, ', Label = ', image_data['label'])
+            # except:
+            #     print("wrong")
 
 
 if __name__ == '__main__':
