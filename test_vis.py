@@ -130,9 +130,9 @@ class TFRecordExtractor:
                                             0.0, 1.0)
                 tf.where(tf.less(tf.reduce_mean(im_warp, axis=[1, 2, 3]), 0.2), im_warp, im_w_adj)
                 # im_warp_v = tf.Variable(im_warp)
-                # im_warp_v = layers.random_erasing(im_warp_v)
-                im_warp_v = tf.squeeze(layers.random_erasing(im_warp))
-                print(im_warp_v.shape)
+                im_warp_v = layers.random_erasing(im_warp)
+                im_warp_v = tf.squeeze(layers.random_erasing(im_warp_v))
+                # print(type(im_warp_v.eval()))
 
                 mpimg.imsave(save_path1, image_data['img'])
                 # print(im_warp_v.dtype)

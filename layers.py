@@ -1,38 +1,45 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib import slim
+import os, random
+import cv2
 
 
-def random_erasing(img, probability=0.5, sl=0.02, sh=0.4, r1=0.3):
+def random_erasing(img, probability=0.6, sl=0.02, sh=0.04, r1=0.3):
     """
     img is a 3-D variable (ex: tf.Variable(image, validate_shape=False) ) and BHWC order
     """
     # BHWC order
-    num_batch = tf.shape(img)[0]
-    height = tf.shape(img)[1]
-    width = tf.shape(img)[2]
-    channel = tf.shape(img)[3]
-    area = tf.cast(width * height, tf.float32)
+    num_batch = tf.shape(img)[0].eval()
+    height = tf.shape(img)[1].eval()
+    width = tf.shape(img)[2].eval()
+    channel = tf.shape(img)[3].eval()
+    area = width * height
 
-    erase_area_low_bound = tf.cast(tf.round(tf.sqrt(sl * area * r1)), tf.int32)
-    erase_area_up_bound = tf.cast(tf.round(tf.sqrt((sh * area) / r1)), tf.int32)
-    h_upper_bound = tf.minimum(erase_area_up_bound, height)
-    w_upper_bound = tf.minimum(erase_area_up_bound, width)
+    erase_area_low_bound = np.round(np.sqrt(sl * area * r1)).astype(np.int)
+    erase_area_up_bound = np.round(np.sqrt(sh * area / r1)).astype(np.int)
+    h_upper_bound = np.minimum(erase_area_up_bound, height)
+    w_upper_bound = np.minimum(erase_area_up_bound, width)
 
-    h = tf.random.uniform([], erase_area_low_bound, h_upper_bound, tf.int32)
-    w = tf.random.uniform([], erase_area_low_bound, w_upper_bound, tf.int32)
+    h = np.random.randint(erase_area_low_bound, h_upper_bound)
+    w = np.random.randint(erase_area_low_bound, w_upper_bound)
 
-    x1 = tf.random.uniform([], 0, height + 1 - h, tf.int32)
-    y1 = tf.random.uniform([], 0, width + 1 - w, tf.int32)
+    x1 = np.random.randint(height/2, height - h)
+    y1 = np.random.randint(0, width - w)
+    # erasing_img = img[:, x1:x1 + h, y1:y1 + w, :].assign(erase_area)
 
-    erase_area = tf.cast(tf.random.uniform([num_batch, h, w, channel], 0, 1, tf.float32), tf.float32)
+    current_path = os.getcwd()
+    material_path = os.path.join(current_path, 'image_base/downloads/cars/')
+    random_file = random.choice(os.listdir(material_path))
+    random_img = cv2.imread(material_path + random_file)
+    random_img = np.expand_dims(cv2.resize(random_img, (w, h)), 0)
+    # print('img shape', random_img.shape)
 
+    img_np = img.eval()
+    # img_np[:, x1:x1 + h, y1:y1 + w, :] = np.random.randint(0, 255, size=(num_batch, h, w, channel)).astype(np.uint8)
+    img_np[:, x1:x1 + h, y1:y1 + w, :] = random_img
+    masked_input = tf.convert_to_tensor(img_np)
 
-    # erasing_img = tf.identity(img)
-    # erasing_img[:, x1:x1 + h, y1:y1 + w, :] = erase_area
-    erasing_img = img[:, x1:x1 + h, y1:y1 + w, :].assign(erase_area)
-
-    return tf.cond(tf.random.uniform([], 0, 1) > probability, lambda: img, lambda: erasing_img)
+    return tf.cond(tf.random.uniform([], 0, 1) > probability, lambda: img, lambda: masked_input)
 
 
 def rand_warp(images, out_size, max_warp=0.5, name='rand_hom'):
@@ -88,8 +95,8 @@ def hom_warp(images, out_size, h, name='hom_warp'):
             max_x = tf.cast(tf.shape(im)[2] - 1, 'int32')
 
             # scale indices from [-1, 1] to [0, width/height]
-            x = (x + 1.0) * (width_f) / 2.0
-            y = (y + 1.0) * (height_f) / 2.0
+            x = (x + 1.0) * width_f / 2.0
+            y = (y + 1.0) * height_f / 2.0
 
             # do sampling
             x0 = tf.cast(tf.floor(x), 'int32')
