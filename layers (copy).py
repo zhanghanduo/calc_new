@@ -9,10 +9,10 @@ def random_erasing(img, probability=0.6, sl=0.02, sh=0.04, r1=0.3):
     img is a 3-D variable (ex: tf.Variable(image, validate_shape=False) ) and BHWC order
     """
     # BHWC order
-    num_batch = tf.shape(img)[0]
-    height = tf.shape(img)[1]
-    width = tf.shape(img)[2]
-    channel = tf.shape(img)[3]
+    num_batch = tf.shape(img)[0].eval()
+    height = tf.shape(img)[1].eval()
+    width = tf.shape(img)[2].eval()
+    channel = tf.shape(img)[3].eval()
     area = width * height
 
     erase_area_low_bound = np.round(np.sqrt(sl * area * r1)).astype(np.int)

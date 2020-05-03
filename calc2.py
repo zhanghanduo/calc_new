@@ -2,6 +2,8 @@
 
 import os
 import sys
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import datetime
 import tensorflow as tf
 from tensorflow.contrib import slim
@@ -115,10 +117,14 @@ def create_input_fn(split, batch_size):
             files = [indir + tfrecord]
 
         dataset = tf.data.TFRecordDataset(files)
+        dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(400, seed=np.int64(time())))
+        # dataset.shuffle(
+        #     400, seed=np.int64(time()), reshuffle_each_iteration=True).repeat()
+        # dataset.map(parser, num_parallel_calls=n_cpus() // 2).batch(batch_size if split == 'train' else batch_size // 3)
         # dataset = dataset.apply(tf.data.experimental.shuffle_and_repeat(400, seed=np.int64(time())))
-        dataset.shuffle(
-            400, seed=np.int64(time()), reshuffle_each_iteration=True).repeat()
-        dataset.map(parser, num_parallel_calls=n_cpus() // 2).batch(batch_size if split == 'train' else batch_size // 3)
+        dataset = dataset.apply(tf.data.experimental.map_and_batch(parser,
+                                                                   batch_size if split == 'train' else batch_size // 3,
+                                                                   num_parallel_calls=n_cpus() // 2))
 
         dataset = dataset.prefetch(buffer_size=2)
 
@@ -148,17 +154,13 @@ def vss(images, is_training=False, ret_descr=False, reuse=False,
                 weights_initializer=tf.contrib.layers.xavier_initializer(False),
                 padding='SAME'):
 
-            ### Encoder ####################################
+            # Encoder ####################################
+
             r1 = slim.conv2d(images, 32, [3, 3])
-            # print("r1 input: {}".format(tf.shape(images)))
-            # print("r1 output: {}".format(tf.shape(r1)))
             r2 = slim.conv2d(r1, 16, [1, 1])
             r3 = slim.conv2d(r2, 32, [3, 3]) + r1
-            # print("r2 input: {}".fch
-            # ormat(tf.shape(r3)))
             r4 = slim.conv2d(r3, 16, [1, 1])
             r5 = slim.conv2d(r4, 32, [3, 3]) + r3
-
             p1 = tf.layers.max_pooling2d(r5, [2, 2], 2, padding='same')
 
             d21 = slim.conv2d(p1, 64, [3, 3])
@@ -176,7 +178,7 @@ def vss(images, is_training=False, ret_descr=False, reuse=False,
             d51 = slim.conv2d(p4, 512, [3, 3])
             d52 = slim.conv2d(d51, 512, [3, 3])
 
-            #### Latent vars #######################################
+            # Latent vars #################################
 
             # Dont slice since we dont want to compute twice as many feature maps for nothing
             mu = slim.conv2d(d52, 4 * (1 + N_CLASSES), [3, 3], scope="mu",
@@ -219,7 +221,7 @@ def vss(images, is_training=False, ret_descr=False, reuse=False,
             # Random normal variable for decoder :D
             z = mu + tf.sqrt(tf.exp(log_sig_sq)) * eps
 
-            ### Decoder ####################################
+            # Decoder ####################################
             decoders = []
             for i in range(1 + N_CLASSES):
                 # depth_to_space:
@@ -275,7 +277,7 @@ def model_fn(features, labels, mode, hparams):
                                 tf.random.uniform([tf.shape(im_warp)[0], 1, 1, 1], -.8, 0.0),
                                 0.0, 1.0)
     tf.where(tf.less(tf.reduce_mean(im_warp, axis=[1, 2, 3]), 0.2), im_warp, im_w_adj)
-    im_warp = layers.random_erasing(im_warp)
+    # im_warp = layers.random_erasing(im_warp)
 
     mu, log_sig_sq, rec, seg, z, c_centers, descr = vss(images, is_training)
     descr_p = vss(im_warp, is_training, True, True)
@@ -284,6 +286,7 @@ def model_fn(features, labels, mode, hparams):
     lp = tf.reduce_sum(descr_p * descr, -1)
     ln = tf.reduce_sum(descr_n * descr, -1)
     m = 0.5
+    # Triplet Loss
     simloss = tf.reduce_mean(tf.maximum(tf.zeros_like(ln), ln + m - lp))
 
     # labels = tf.cast(labels, tf.bool)
@@ -465,6 +468,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
     sys.excepthook = utils.colored_hook(
         os.path.dirname(os.path.realpath(__file__)))
     tf.app.run()

@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import sys
 import math
 import numpy as np
 import os
@@ -100,6 +101,7 @@ def kp_descriptor(tensor):
             _h = h // n
             _w = w // n
             _t = tensor[0, i * _h:(i + 1) * _h, j * _w:(j + 1) * _w]
+            # Get the 2D coordinate of the maximum value of the grid cell in each channel.
             ky_, kx_ = np.unravel_index(np.argmax(
                 _t.reshape(-1, c), axis=0), (_h, _w))
             ky.append(ky_ * (i + 1))
@@ -107,6 +109,7 @@ def kp_descriptor(tensor):
 
             _t = np.pad(_t, ((1, 1), (1, 1), (0, 0)), 'constant')
 
+            # for each channel
             for k in range(len(ky_)):
                 _ky = ky_[k] + 1  # +1 for pad
                 _kx = kx_[k] + 1
@@ -145,7 +148,7 @@ def kp_descriptor(tensor):
 
     kp_d = []
     kp = []
-    pi = np.pi
+    # pi = np.pi
 
     # tensor = np.pad(tensor, ((0,0),(1,1),(1,1),(0,0)), 'constant')
 
@@ -155,7 +158,7 @@ def kp_descriptor(tensor):
 
         kp.append(cv2.KeyPoint(float(kx[i]), float(ky[i]),
                                _size=1.0, _response=10000 * np.log(1 + np.exp(response[i])), _angle=theta[i]))
-        t = theta[i]
+        # t = theta[i]
         od = [tensor[:, ky_i - 1, kx_i - 1],
               tensor[:, ky_i - 1, kx_i],
               tensor[:, ky_i - 1, kx_i + 1],
@@ -330,11 +333,12 @@ class TrainingHook(tf.train.SessionRunHook):
     """A utility for displaying training information such as the loss, percent
     completed, estimated finish date and time."""
 
-    def __init__(self, steps, eval_steps):
+    def __init__(self, steps, eval_steps, shapes=None):
         self.steps = steps
         self.eval_steps = eval_steps
         self.last_time = time.time()
         self.last_est = self.last_time
+        self.shapes = shapes
 
         self.eta_interval = int(math.ceil(0.1 * self.steps))
         self.current_interval = 0
@@ -379,6 +383,9 @@ class TrainingHook(tf.train.SessionRunHook):
             mask = run_values.results["label"]
 
             mask_helper(im, pred, rec, mask, "Train")
+
+            print('debug shape ', self.shapes)
+
             tp = (step,
                   self.steps,
                   time.strftime("%a %d %H:%M:%S", time.localtime(time.time() + eta_time)),
@@ -479,10 +486,15 @@ def standard_model_fn(func, steps, run_config,
         is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
         ret = func(features, labels, mode, params)
+        pred = ret["pred"]
+        # shapes = tf.print("pred shape: ", tf.shape(pred), output_stream=sys.stdout)
+        shapes = tf.compat.v1.Print(pred, [tf.shape(pred)], message="pred shape is: ")
+        # shapes3 = tf.compat.v1.Print(rec, [tf.shape(rec)], message="rec shape is: ")
         tf.add_to_collection("total_loss", ret["loss"])
         tf.add_to_collection("segloss", ret["segloss"])
         tf.add_to_collection("recloss", ret["recloss"])
         tf.add_to_collection("simloss", ret["simloss"])
+        # tf.add_to_collection("r5shape", ret["r5shape"])
         tf.add_to_collection("kld", ret["kld"])
         tf.add_to_collection("im", ret["im"])
         tf.add_to_collection("pred", ret["pred"])
@@ -497,7 +509,8 @@ def standard_model_fn(func, steps, run_config,
 
             plt.ion()
 
-            training_hooks.append(TrainingHook(steps, eval_steps))
+            training_hooks.append(TrainingHook(steps, eval_steps, shapes))
+            # training_hooks.append(tf.train.LoggingTensorHook({"r5 is:": func})
 
             if optimizer_fn is None:
                 optimizer = tf.train.AdamOptimizer(params.learning_rate)
